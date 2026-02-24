@@ -403,41 +403,86 @@ curl -k -X POST ${BASE_URL}/api/trading/buy \\
               🤖 Todos los endpoints de trading requieren header: <code className="text-white">X-API-Token: &lt;api_token_del_bot&gt;</code>
             </p>
 
-            <Endpoint method="POST" path="/api/trading/buy" auth="X-API-Token" description="Ejecuta una orden de compra. Si no se especifica precio, se toma el precio actual de mercado (Binance).">
+            {/* Leverage explainer */}
+            <div className="cyber-card p-5 mb-6 border border-cyber-yellow bg-cyber-yellow bg-opacity-5">
+              <h3 className="font-orbitron text-cyber-yellow text-sm uppercase mb-3">⚡ Multiplicador de Apalancamiento (x1 — x40)</h3>
+              <p className="font-mono text-xs text-gray-300 leading-relaxed mb-3">
+                El parámetro <code className="text-cyber-cyan">leverage</code> amplifica tus ganancias Y pérdidas.
+                Con apalancamiento solo depositas un <strong>margen</strong> (colateral) equivalente al valor total dividido entre el leverage.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4 font-mono text-xs">
+                <div className="bg-black bg-opacity-50 p-3 border border-cyber-border">
+                  <p className="text-gray-500 mb-1">FÓRMULA MARGEN</p>
+                  <p className="text-cyber-cyan">margin = price × qty / leverage</p>
+                </div>
+                <div className="bg-black bg-opacity-50 p-3 border border-cyber-border">
+                  <p className="text-gray-500 mb-1">P&L AL CERRAR</p>
+                  <p className="text-cyber-green">pnl = (exit - entry) × qty</p>
+                </div>
+                <div className="bg-black bg-opacity-50 p-3 border border-cyber-border">
+                  <p className="text-gray-500 mb-1">LIQUIDACIÓN SI</p>
+                  <p className="text-cyber-pink">pnl ≤ -margin → payout = 0</p>
+                </div>
+              </div>
+              <h4 className="font-mono text-xs text-gray-500 uppercase mb-2">Ejemplo: BTC a $60,000 — x10</h4>
+              <CodeBlock lang="bash" code={`# Con x10: margin = $60,000 × 0.001 / 10 = $6 (en lugar de $60)
+# Si BTC sube a $66,000 (+10%): pnl = +$6  → ROI = +100% del margen
+# Si BTC baja a $54,000 (-10%): pnl = -$6  → liquidado (perdiste el margen)
+# Con x40: necesitas solo $1.5 de margen para 0.001 BTC
+#           Un +2.5% en precio = +100% del margen`} />
+              <div className="flex gap-3 mt-3 font-mono text-xs">
+                {[
+                  { lev: 'x1',  color: 'text-cyber-green border-cyber-green',  desc: 'Sin apalancamiento' },
+                  { lev: 'x5',  color: 'text-cyber-yellow border-cyber-yellow', desc: 'Bajo riesgo' },
+                  { lev: 'x20', color: 'text-orange-400 border-orange-400',     desc: 'Alto riesgo' },
+                  { lev: 'x40', color: 'text-cyber-pink border-cyber-pink',     desc: 'Máximo — peligroso' },
+                ].map(l => (
+                  <div key={l.lev} className="text-center">
+                    <span className={`px-2 py-1 border ${l.color} block mb-1`}>{l.lev}</span>
+                    <span className="text-gray-600">{l.desc}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <Endpoint method="POST" path="/api/trading/buy" auth="X-API-Token" description="Ejecuta una orden de compra. Solo se descuenta del balance el margen (price × quantity / leverage).">
               <h4 className="font-mono text-xs text-gray-500 uppercase mt-4 mb-2">Request Body</h4>
               <CodeBlock lang="json" code={`{
   "symbol":   "BTCUSDT",
   "quantity": 0.001,
-  "price":    63000 (opcional — si se omite, se usa precio de mercado)
+  "leverage": 10        (opcional, default: 1, max: 40)
 }`} />
               <h4 className="font-mono text-xs text-gray-500 uppercase mt-4 mb-2">Response 201</h4>
               <CodeBlock lang="json" code={`{
-  "id":         42,
-  "type":       "buy",
-  "symbol":     "BTCUSDT",
-  "quantity":   0.001,
-  "price":      63548.12,
-  "status":     "filled",
-  "created_at": "2026-02-24T16:00:00.000Z"
+  "order_id":    42,
+  "symbol":      "BTCUSDT",
+  "quantity":    0.001,
+  "price":       63548.12,
+  "leverage":    10,
+  "notional":    63.55,
+  "margin_used": 6.35,
+  "new_balance": 993.65
 }`} />
             </Endpoint>
 
-            <Endpoint method="POST" path="/api/trading/sell" auth="X-API-Token" description="Ejecuta una orden de venta. Requiere tener posición abierta del símbolo indicado.">
+            <Endpoint method="POST" path="/api/trading/sell" auth="X-API-Token" description="Cierra una posición. El P&L se calcula sobre la cantidad completa. Si las pérdidas superan el margen, la posición es liquidada.">
               <h4 className="font-mono text-xs text-gray-500 uppercase mt-4 mb-2">Request Body</h4>
               <CodeBlock lang="json" code={`{
   "symbol":   "BTCUSDT",
-  "quantity": 0.001,
-  "price":    65000 (opcional)
+  "quantity": 0.001
 }`} />
-              <h4 className="font-mono text-xs text-gray-500 uppercase mt-4 mb-2">Response 201</h4>
+              <h4 className="font-mono text-xs text-gray-500 uppercase mt-4 mb-2">Response 200</h4>
               <CodeBlock lang="json" code={`{
-  "id":         43,
-  "type":       "sell",
-  "symbol":     "BTCUSDT",
-  "quantity":   0.001,
-  "price":      65000.00,
-  "status":     "filled",
-  "pnl":        1.45
+  "symbol":          "BTCUSDT",
+  "entry_price":     63548.12,
+  "exit_price":      65000.00,
+  "leverage":        10,
+  "margin_returned": 6.35,
+  "pnl":             "1.4519",
+  "leveraged_roi_pct": "22.86",
+  "liquidated":      false,
+  "payout":          "7.8019",
+  "new_balance":     1001.45
 }`} />
             </Endpoint>
 
@@ -446,7 +491,8 @@ curl -k -X POST ${BASE_URL}/api/trading/buy \\
               <CodeBlock lang="json" code={`{
   "symbol":        "BTCUSDT",
   "quantity":      0.001,
-  "trigger_price": 60000
+  "trigger_price": 60000,
+  "leverage":      10     (opcional)
 }`} />
               <h4 className="font-mono text-xs text-gray-500 uppercase mt-4 mb-2">Response 201</h4>
               <CodeBlock lang="json" code={`{
@@ -465,7 +511,8 @@ curl -k -X POST ${BASE_URL}/api/trading/buy \\
               <CodeBlock lang="json" code={`{
   "symbol":        "BTCUSDT",
   "quantity":      0.001,
-  "trigger_price": 70000
+  "trigger_price": 70000,
+  "leverage":      10     (opcional)
 }`} />
             </Endpoint>
 
@@ -524,7 +571,8 @@ curl -k -X POST ${BASE_URL}/api/trading/buy \\
                       ['403', 'Sin permisos para el recurso', 'El bot no pertenece a tu cuenta'],
                       ['404', 'Recurso no encontrado', 'Verifica el ID del bot/orden'],
                       ['409', 'Conflicto (usuario/email duplicado)', 'El email o username ya existe'],
-                      ['422', 'Saldo insuficiente', 'El bot no tiene suficiente balance para la operación'],
+                      ['422', 'Saldo insuficiente para el margen', 'El bot no tiene balance suficiente para el margen requerido'],
+                      ['200 liquidated:true', 'Posición liquidada por apalancamiento', 'La pérdida superó el margen — payout = $0'],
                       ['500', 'Error interno del servidor', 'Contacta con el administrador'],
                     ].map(([code, cause, fix]) => (
                       <tr key={code} className="border-b border-cyber-border hover:bg-white hover:bg-opacity-5">

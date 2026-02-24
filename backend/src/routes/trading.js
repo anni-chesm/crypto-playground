@@ -5,50 +5,57 @@ const { getCoinPrice } = require('../services/cryptoApi');
 
 const router = express.Router();
 
+const MAX_LEVERAGE = 40;
+const MIN_LEVERAGE = 1;
+
+function clampLeverage(val) {
+  const l = parseInt(val) || 1;
+  return Math.min(Math.max(l, MIN_LEVERAGE), MAX_LEVERAGE);
+}
+
 // POST /api/trading/buy
 router.post('/buy', authenticateApiToken, async (req, res) => {
   try {
-    const { symbol, quantity } = req.body;
+    const { symbol, quantity, leverage: rawLeverage } = req.body;
     const bot = req.bot;
+    const leverage = clampLeverage(rawLeverage);
 
     if (!symbol || !quantity || quantity <= 0) {
       return res.status(400).json({ error: 'Symbol and positive quantity are required' });
     }
 
-    // Get current price
     const priceData = await getCoinPrice(symbol);
     const price = priceData.price;
-    const totalCost = price * quantity;
+    const notional = price * quantity;
+    const margin = notional / leverage;
 
-    // Check balance
-    if (bot.current_balance < totalCost) {
+    if (bot.current_balance < margin) {
       return res.status(400).json({
-        error: `Insufficient balance. Need $${totalCost.toFixed(2)}, have $${bot.current_balance.toFixed(2)}`
+        error: `Insufficient balance. Need $${margin.toFixed(2)} margin (x${leverage} leverage on $${notional.toFixed(2)} notional), have $${bot.current_balance.toFixed(2)}`
       });
     }
 
-    // Create order and update balance in a transaction
     const transaction = db.transaction(() => {
       const order = db.prepare(
-        'INSERT INTO orders (bot_id, type, symbol, quantity, price, status, filled_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)'
-      ).run(bot.id, 'buy', symbol.toUpperCase(), quantity, price, 'filled');
+        'INSERT INTO orders (bot_id, type, symbol, quantity, price, leverage, margin, status, filled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)'
+      ).run(bot.id, 'buy', symbol.toUpperCase(), quantity, price, leverage, margin, 'filled');
 
-      // Deduct balance
       db.prepare('UPDATE bots SET current_balance = current_balance - ? WHERE id = ?')
-        .run(totalCost, bot.id);
+        .run(margin, bot.id);
 
-      // Update or create position
       const existing = db.prepare('SELECT * FROM positions WHERE bot_id = ? AND symbol = ?')
         .get(bot.id, symbol.toUpperCase());
 
       if (existing) {
         const newQty = existing.quantity + quantity;
         const newAvg = (existing.avg_entry_price * existing.quantity + price * quantity) / newQty;
-        db.prepare('UPDATE positions SET quantity = ?, avg_entry_price = ? WHERE id = ?')
-          .run(newQty, newAvg, existing.id);
+        const newMargin = (existing.margin || 0) + margin;
+        const newLeverage = Math.round(((existing.leverage || 1) * existing.quantity + leverage * quantity) / newQty);
+        db.prepare('UPDATE positions SET quantity = ?, avg_entry_price = ?, leverage = ?, margin = ? WHERE id = ?')
+          .run(newQty, newAvg, newLeverage, newMargin, existing.id);
       } else {
-        db.prepare('INSERT INTO positions (bot_id, symbol, quantity, avg_entry_price) VALUES (?, ?, ?, ?)')
-          .run(bot.id, symbol.toUpperCase(), quantity, price);
+        db.prepare('INSERT INTO positions (bot_id, symbol, quantity, avg_entry_price, leverage, margin) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(bot.id, symbol.toUpperCase(), quantity, price, leverage, margin);
       }
 
       return order.lastInsertRowid;
@@ -57,13 +64,15 @@ router.post('/buy', authenticateApiToken, async (req, res) => {
     const orderId = transaction();
     const updatedBot = db.prepare('SELECT current_balance FROM bots WHERE id = ?').get(bot.id);
 
-    res.json({
+    res.status(201).json({
       success: true,
       order_id: orderId,
       symbol: symbol.toUpperCase(),
       quantity,
       price,
-      total_cost: totalCost,
+      leverage,
+      notional,
+      margin_used: margin,
       new_balance: updatedBot.current_balance
     });
   } catch (err) {
@@ -82,7 +91,6 @@ router.post('/sell', authenticateApiToken, async (req, res) => {
       return res.status(400).json({ error: 'Symbol and positive quantity are required' });
     }
 
-    // Check position
     const position = db.prepare('SELECT * FROM positions WHERE bot_id = ? AND symbol = ?')
       .get(bot.id, symbol.toUpperCase());
 
@@ -92,40 +100,56 @@ router.post('/sell', authenticateApiToken, async (req, res) => {
       });
     }
 
-    // Get current price
     const priceData = await getCoinPrice(symbol);
     const price = priceData.price;
-    const totalProceeds = price * quantity;
+
+    const leverage = position.leverage || 1;
+    const entryPrice = position.avg_entry_price;
+    // Fraction of position being sold
+    const fraction = quantity / position.quantity;
+    const marginUsed = (position.margin || (entryPrice * quantity / leverage)) * fraction;
+
+    // P&L = price difference × quantity (leverage is already "in" via reduced margin)
+    const pnl = (price - entryPrice) * quantity;
+    const isLiquidated = pnl <= -marginUsed;
+    const payout = isLiquidated ? 0 : marginUsed + pnl;
 
     const transaction = db.transaction(() => {
+      const status = isLiquidated ? 'liquidated' : 'filled';
       db.prepare(
-        'INSERT INTO orders (bot_id, type, symbol, quantity, price, status, filled_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)'
-      ).run(bot.id, 'sell', symbol.toUpperCase(), quantity, price, 'filled');
+        'INSERT INTO orders (bot_id, type, symbol, quantity, price, leverage, margin, status, filled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)'
+      ).run(bot.id, 'sell', symbol.toUpperCase(), quantity, price, leverage, marginUsed, status);
 
-      // Add proceeds to balance
-      db.prepare('UPDATE bots SET current_balance = current_balance + ? WHERE id = ?')
-        .run(totalProceeds, bot.id);
+      if (payout > 0) {
+        db.prepare('UPDATE bots SET current_balance = current_balance + ? WHERE id = ?')
+          .run(payout, bot.id);
+      }
 
-      // Update position
       const newQty = position.quantity - quantity;
-      if (newQty <= 0) {
+      if (newQty <= 0.000001) {
         db.prepare('DELETE FROM positions WHERE id = ?').run(position.id);
       } else {
-        db.prepare('UPDATE positions SET quantity = ? WHERE id = ?').run(newQty, position.id);
+        const newMargin = (position.margin || 0) * (1 - fraction);
+        db.prepare('UPDATE positions SET quantity = ?, margin = ? WHERE id = ?')
+          .run(newQty, newMargin, position.id);
       }
     });
 
     transaction();
     const updatedBot = db.prepare('SELECT current_balance FROM bots WHERE id = ?').get(bot.id);
-    const pnl = (price - position.avg_entry_price) * quantity;
 
     res.json({
       success: true,
       symbol: symbol.toUpperCase(),
       quantity,
-      price,
-      total_proceeds: totalProceeds,
-      pnl,
+      entry_price: entryPrice,
+      exit_price: price,
+      leverage,
+      margin_returned: marginUsed,
+      pnl: pnl.toFixed(4),
+      leveraged_roi_pct: ((pnl / marginUsed) * 100).toFixed(2),
+      liquidated: isLiquidated,
+      payout: payout.toFixed(4),
       new_balance: updatedBot.current_balance
     });
   } catch (err) {
@@ -137,24 +161,26 @@ router.post('/sell', authenticateApiToken, async (req, res) => {
 // POST /api/trading/stop-loss
 router.post('/stop-loss', authenticateApiToken, async (req, res) => {
   try {
-    const { symbol, quantity, stop_price } = req.body;
+    const { symbol, quantity, stop_price, leverage: rawLeverage } = req.body;
     const bot = req.bot;
+    const leverage = clampLeverage(rawLeverage);
 
     if (!symbol || !quantity || !stop_price) {
       return res.status(400).json({ error: 'Symbol, quantity and stop_price are required' });
     }
 
     const order = db.prepare(
-      'INSERT INTO orders (bot_id, type, symbol, quantity, price, status) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(bot.id, 'stop-loss', symbol.toUpperCase(), quantity, stop_price, 'open');
+      'INSERT INTO orders (bot_id, type, symbol, quantity, price, leverage, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(bot.id, 'stop-loss', symbol.toUpperCase(), quantity, stop_price, leverage, 'open');
 
-    res.json({
+    res.status(201).json({
       success: true,
       order_id: order.lastInsertRowid,
       type: 'stop-loss',
       symbol: symbol.toUpperCase(),
       quantity,
       stop_price,
+      leverage,
       status: 'open'
     });
   } catch (err) {
@@ -166,24 +192,26 @@ router.post('/stop-loss', authenticateApiToken, async (req, res) => {
 // POST /api/trading/take-profit
 router.post('/take-profit', authenticateApiToken, async (req, res) => {
   try {
-    const { symbol, quantity, target_price } = req.body;
+    const { symbol, quantity, target_price, leverage: rawLeverage } = req.body;
     const bot = req.bot;
+    const leverage = clampLeverage(rawLeverage);
 
     if (!symbol || !quantity || !target_price) {
       return res.status(400).json({ error: 'Symbol, quantity and target_price are required' });
     }
 
     const order = db.prepare(
-      'INSERT INTO orders (bot_id, type, symbol, quantity, price, status) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(bot.id, 'take-profit', symbol.toUpperCase(), quantity, target_price, 'open');
+      'INSERT INTO orders (bot_id, type, symbol, quantity, price, leverage, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(bot.id, 'take-profit', symbol.toUpperCase(), quantity, target_price, leverage, 'open');
 
-    res.json({
+    res.status(201).json({
       success: true,
       order_id: order.lastInsertRowid,
       type: 'take-profit',
       symbol: symbol.toUpperCase(),
       quantity,
       target_price,
+      leverage,
       status: 'open'
     });
   } catch (err) {
@@ -199,7 +227,6 @@ router.get('/orders', authenticateApiToken, (req, res) => {
       .all(req.bot.id);
     res.json(orders);
   } catch (err) {
-    console.error('Orders error:', err);
     res.status(500).json({ error: 'Failed to fetch orders' });
   }
 });
@@ -211,7 +238,6 @@ router.get('/positions', authenticateApiToken, (req, res) => {
       .all(req.bot.id);
     res.json(positions);
   } catch (err) {
-    console.error('Positions error:', err);
     res.status(500).json({ error: 'Failed to fetch positions' });
   }
 });
@@ -229,7 +255,6 @@ router.delete('/orders/:id', authenticateApiToken, (req, res) => {
     db.prepare("UPDATE orders SET status = 'cancelled' WHERE id = ?").run(order.id);
     res.json({ message: 'Order cancelled', order_id: order.id });
   } catch (err) {
-    console.error('Cancel order error:', err);
     res.status(500).json({ error: 'Failed to cancel order' });
   }
 });

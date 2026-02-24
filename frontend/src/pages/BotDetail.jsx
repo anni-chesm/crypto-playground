@@ -176,25 +176,36 @@ export default function BotDetail() {
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-cyber-border">
-                      {['Symbol', 'Quantity', 'Avg Entry', 'Value (est.)', 'Since'].map(h => (
+                      {['Symbol', 'Qty', 'Avg Entry', 'Leverage', 'Margin', 'Notional', 'Since'].map(h => (
                         <th key={h} className="font-mono text-xs text-gray-500 text-left p-3 uppercase">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {positions.map(pos => (
-                      <tr key={pos.id} className="border-b border-cyber-border hover:bg-white hover:bg-opacity-5">
-                        <td className="p-3 font-mono font-bold text-cyber-cyan">{pos.symbol}</td>
-                        <td className="p-3 font-mono text-white">{parseFloat(pos.quantity).toFixed(6)}</td>
-                        <td className="p-3 font-mono text-gray-300">${parseFloat(pos.avg_entry_price).toFixed(4)}</td>
-                        <td className="p-3 font-mono text-gray-300">
-                          ${(pos.quantity * pos.avg_entry_price).toFixed(2)}
-                        </td>
-                        <td className="p-3 font-mono text-xs text-gray-500">
-                          {new Date(pos.created_at).toLocaleDateString()}
-                        </td>
-                      </tr>
-                    ))}
+                    {positions.map(pos => {
+                      const lev = pos.leverage || 1
+                      const margin = pos.margin || (pos.avg_entry_price * pos.quantity / lev)
+                      const notional = pos.avg_entry_price * pos.quantity
+                      return (
+                        <tr key={pos.id} className="border-b border-cyber-border hover:bg-white hover:bg-opacity-5">
+                          <td className="p-3 font-mono font-bold text-cyber-cyan">{pos.symbol}</td>
+                          <td className="p-3 font-mono text-white">{parseFloat(pos.quantity).toFixed(6)}</td>
+                          <td className="p-3 font-mono text-gray-300">${parseFloat(pos.avg_entry_price).toFixed(4)}</td>
+                          <td className="p-3 font-mono">
+                            <span className={`px-2 py-0.5 text-xs font-bold border ${
+                              lev >= 20 ? 'text-cyber-pink border-cyber-pink' :
+                              lev >= 5  ? 'text-cyber-yellow border-cyber-yellow' :
+                                          'text-cyber-green border-cyber-green'
+                            }`}>x{lev}</span>
+                          </td>
+                          <td className="p-3 font-mono text-gray-300">${margin.toFixed(2)}</td>
+                          <td className="p-3 font-mono text-gray-400">${notional.toFixed(2)}</td>
+                          <td className="p-3 font-mono text-xs text-gray-500">
+                            {new Date(pos.created_at).toLocaleDateString()}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -214,7 +225,7 @@ export default function BotDetail() {
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-cyber-border">
-                      {['ID', 'Type', 'Symbol', 'Qty', 'Price', 'Status', 'Date', 'Action'].map(h => (
+                      {['ID', 'Type', 'Symbol', 'Qty', 'Price', 'Lev', 'Margin', 'Status', 'Date', 'Action'].map(h => (
                         <th key={h} className="font-mono text-xs text-gray-500 text-left p-3 uppercase">{h}</th>
                       ))}
                     </tr>
@@ -235,13 +246,24 @@ export default function BotDetail() {
                         <td className="p-3 font-mono font-bold text-cyber-cyan">{order.symbol}</td>
                         <td className="p-3 font-mono text-white">{parseFloat(order.quantity).toFixed(6)}</td>
                         <td className="p-3 font-mono text-gray-300">${parseFloat(order.price).toFixed(4)}</td>
+                        <td className="p-3 font-mono">
+                          <span className={`text-xs px-1.5 py-0.5 border ${
+                            (order.leverage||1) >= 20 ? 'text-cyber-pink border-cyber-pink' :
+                            (order.leverage||1) >= 5  ? 'text-cyber-yellow border-cyber-yellow' :
+                                                        'text-gray-500 border-gray-700'
+                          }`}>x{order.leverage||1}</span>
+                        </td>
+                        <td className="p-3 font-mono text-gray-400 text-xs">
+                          {order.margin ? `$${parseFloat(order.margin).toFixed(2)}` : '—'}
+                        </td>
                         <td className="p-3 font-mono text-xs">
                           <span className={
-                            order.status === 'filled' ? 'text-cyber-green' :
-                            order.status === 'cancelled' ? 'text-gray-500' :
+                            order.status === 'filled'     ? 'text-cyber-green' :
+                            order.status === 'liquidated' ? 'text-cyber-pink font-bold' :
+                            order.status === 'cancelled'  ? 'text-gray-500' :
                             'text-cyber-yellow'
                           }>
-                            {order.status}
+                            {order.status === 'liquidated' ? '⚡ LIQ' : order.status}
                           </span>
                         </td>
                         <td className="p-3 font-mono text-xs text-gray-500">
@@ -275,7 +297,7 @@ export default function BotDetail() {
               <p className="text-cyber-green">curl -X POST https://192.168.1.19:8001/api/trading/buy \</p>
               <p className="text-cyber-green pl-4">-H "X-API-Token: {bot.api_token.slice(0, 8)}..." \</p>
               <p className="text-cyber-green pl-4">-H "Content-Type: application/json" \</p>
-              <p className="text-cyber-green pl-4">-d '{`{"symbol":"BTC","quantity":0.001}`}'</p>
+              <p className="text-cyber-green pl-4">-d '{`{"symbol":"BTCUSDT","quantity":0.001,"leverage":10}`}'</p>
             </div>
           </div>
         </div>

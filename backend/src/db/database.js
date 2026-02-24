@@ -40,7 +40,9 @@ db.exec(`
     symbol TEXT NOT NULL,
     quantity REAL NOT NULL,
     price REAL NOT NULL,
-    status TEXT DEFAULT 'open' CHECK(status IN ('open', 'filled', 'cancelled')),
+    leverage INTEGER DEFAULT 1,
+    margin REAL,
+    status TEXT DEFAULT 'open' CHECK(status IN ('open', 'filled', 'cancelled', 'liquidated')),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     filled_at DATETIME,
     FOREIGN KEY (bot_id) REFERENCES bots(id)
@@ -52,10 +54,26 @@ db.exec(`
     symbol TEXT NOT NULL,
     quantity REAL NOT NULL DEFAULT 0,
     avg_entry_price REAL NOT NULL DEFAULT 0,
+    leverage INTEGER DEFAULT 1,
+    margin REAL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (bot_id) REFERENCES bots(id)
   );
 `);
+
+// Migrations — add new columns if they don't exist
+const migrate = () => {
+  const migrations = [
+    `ALTER TABLE orders ADD COLUMN leverage INTEGER DEFAULT 1`,
+    `ALTER TABLE orders ADD COLUMN margin REAL`,
+    `ALTER TABLE positions ADD COLUMN leverage INTEGER DEFAULT 1`,
+    `ALTER TABLE positions ADD COLUMN margin REAL DEFAULT 0`,
+  ];
+  for (const sql of migrations) {
+    try { db.exec(sql); } catch (_) { /* column already exists */ }
+  }
+};
+migrate();
 
 console.log('Database initialized');
 
