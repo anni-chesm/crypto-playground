@@ -52,6 +52,101 @@ router.post('/', authenticateJWT, (req, res) => {
   }
 });
 
+// GET /api/bots/chart-data - portfolio balance history for all user bots
+router.get('/chart-data', authenticateJWT, (req, res) => {
+  try {
+    const hours = Math.min(6, Math.max(3, parseInt(req.query.hours) || 6));
+    const nowMs = Date.now();
+    const fromMs = nowMs - hours * 60 * 60 * 1000;
+    const fromUnix = Math.floor(fromMs / 1000);
+
+    const bots = db.prepare('SELECT * FROM bots WHERE user_id = ? ORDER BY created_at ASC').all(req.user.id);
+
+    const bucketSec = 600; // 10 minutes
+    const colors = ['#00f5ff', '#ff006e', '#39ff14', '#bf5af2', '#ff9f0a', '#ffd60a', '#30d158'];
+
+    const chartBots = bots.map((bot, idx) => {
+      const botCreatedMs = new Date(bot.created_at + 'Z').getTime();
+      const startMs = Math.max(fromMs, botCreatedMs);
+
+      // Build 10-min buckets from startMs to nowMs
+      const buckets = [];
+      for (let t = startMs; t <= nowMs; t += bucketSec * 1000) {
+        buckets.push(t);
+      }
+      if (buckets.length === 0 || buckets[buckets.length - 1] < nowMs) {
+        buckets.push(nowMs);
+      }
+
+      // Get balance log entries for this bot within range
+      const logs = db.prepare(`
+        SELECT balance, CAST(strftime('%s', recorded_at) AS INTEGER) AS ts_unix
+        FROM bot_balance_log
+        WHERE bot_id = ? AND CAST(strftime('%s', recorded_at) AS INTEGER) >= ?
+        ORDER BY recorded_at ASC
+      `).all(bot.id, fromUnix);
+
+      // Build series: walk through buckets, applying logs
+      let lastBalance = bot.initial_balance;
+      let logIdx = 0;
+      const series = [];
+
+      for (const bucketMs of buckets) {
+        const bucketUnix = Math.floor(bucketMs / 1000);
+        while (logIdx < logs.length && logs[logIdx].ts_unix <= bucketUnix) {
+          lastBalance = logs[logIdx].balance;
+          logIdx++;
+        }
+        series.push({ time: bucketUnix, value: parseFloat(lastBalance.toFixed(2)) });
+      }
+
+      // Last point always = actual current balance
+      if (series.length > 0) {
+        series[series.length - 1].value = parseFloat(bot.current_balance.toFixed(2));
+      }
+
+      // Get order markers (filled buy/sell within range)
+      const orders = db.prepare(`
+        SELECT type, symbol, price, quantity, status,
+               CAST(strftime('%s', COALESCE(filled_at, created_at)) AS INTEGER) AS ts_unix
+        FROM orders
+        WHERE bot_id = ?
+          AND status IN ('filled', 'liquidated')
+          AND CAST(strftime('%s', COALESCE(filled_at, created_at)) AS INTEGER) >= ?
+        ORDER BY COALESCE(filled_at, created_at) ASC
+      `).all(bot.id, fromUnix);
+
+      const markers = orders.map(o => ({
+        time: Math.floor(o.ts_unix / bucketSec) * bucketSec, // snap to 10-min bucket
+        type: o.type,
+        symbol: o.symbol,
+        price: o.price,
+        quantity: o.quantity,
+        status: o.status
+      }));
+
+      return {
+        id: bot.id,
+        name: bot.name,
+        color: colors[idx % colors.length],
+        currentBalance: parseFloat(bot.current_balance.toFixed(2)),
+        series,
+        markers
+      };
+    });
+
+    res.json({
+      from: Math.floor(fromMs / 1000),
+      to: Math.floor(nowMs / 1000),
+      bucketSeconds: bucketSec,
+      bots: chartBots
+    });
+  } catch (err) {
+    console.error('Chart data error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // GET /api/bots/:id - get a specific bot
 router.get('/:id', authenticateJWT, (req, res) => {
   try {

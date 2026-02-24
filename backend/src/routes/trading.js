@@ -63,6 +63,7 @@ router.post('/buy', authenticateApiToken, async (req, res) => {
 
     const orderId = transaction();
     const updatedBot = db.prepare('SELECT current_balance FROM bots WHERE id = ?').get(bot.id);
+    db.prepare('INSERT INTO bot_balance_log (bot_id, balance) VALUES (?, ?)').run(bot.id, updatedBot.current_balance);
 
     res.status(201).json({
       success: true,
@@ -137,6 +138,7 @@ router.post('/sell', authenticateApiToken, async (req, res) => {
 
     transaction();
     const updatedBot = db.prepare('SELECT current_balance FROM bots WHERE id = ?').get(bot.id);
+    db.prepare('INSERT INTO bot_balance_log (bot_id, balance) VALUES (?, ?)').run(bot.id, updatedBot.current_balance);
 
     res.json({
       success: true,

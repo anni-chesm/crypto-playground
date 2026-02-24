@@ -68,6 +68,13 @@ const migrate = () => {
     `ALTER TABLE orders ADD COLUMN margin REAL`,
     `ALTER TABLE positions ADD COLUMN leverage INTEGER DEFAULT 1`,
     `ALTER TABLE positions ADD COLUMN margin REAL DEFAULT 0`,
+    `CREATE TABLE IF NOT EXISTS bot_balance_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bot_id INTEGER NOT NULL,
+      balance REAL NOT NULL,
+      recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (bot_id) REFERENCES bots(id)
+    )`,
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch (_) { /* column already exists */ }

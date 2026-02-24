@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import api from '../api/client'
 import useAuthStore from '../store/auth'
 import BotCard from '../components/BotCard'
+import PortfolioChart from '../components/PortfolioChart'
 
 export default function Dashboard() {
   const { user } = useAuthStore()
@@ -160,7 +161,7 @@ export default function Dashboard() {
           <div className="flex items-center justify-center h-40">
             <span className="font-mono text-cyber-cyan loading-glow">Loading bots...</span>
           </div>
-        ) : bots.length === 0 ? (
+        ) : bots.length === 0 && !loading ? (
           <div className="cyber-card p-12 text-center">
             <div className="text-6xl mb-4">🤖</div>
             <h3 className="font-orbitron text-cyber-cyan text-xl mb-3">No Bots Yet</h3>
@@ -183,6 +184,13 @@ export default function Dashboard() {
                 onDelete={(b) => setDeleteConfirm(b)}
               />
             ))}
+          </div>
+        )}
+
+        {/* Portfolio evolution chart */}
+        {bots.length > 0 && (
+          <div className="mt-6">
+            <PortfolioChart />
           </div>
         )}
 
