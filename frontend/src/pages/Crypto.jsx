@@ -29,10 +29,18 @@ export default function Crypto() {
     }
   }
 
-  const filteredCoins = coins.filter(c =>
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    c.symbol.toLowerCase().includes(search.toLowerCase())
-  )
+  const filteredCoins = coins
+    .filter(c =>
+      c.name.toLowerCase().includes(search.toLowerCase()) ||
+      c.symbol.toLowerCase().includes(search.toLowerCase())
+    )
+    .sort((a, b) => {
+      const aSym = a.symbol.toUpperCase()
+      const bSym = b.symbol.toUpperCase()
+      if (aSym === 'BTC') return -1
+      if (bSym === 'BTC') return 1
+      return b.current_price - a.current_price
+    })
 
   const formatPrice = (p) => {
     if (p >= 1000) return `$${p.toLocaleString('en-US', { maximumFractionDigits: 2 })}`
