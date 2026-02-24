@@ -3,16 +3,18 @@ import { createChart } from 'lightweight-charts'
 import api from '../api/client'
 
 const INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d', '1w']
-const PRICE_REFRESH_MS = 10000   // update last candle price every 10s
-const CHART_REFRESH_MS = 60000   // full chart reload every 60s
+const PRICE_REFRESH_MS = 10000  // update last candle price every 10s
+const CHART_REFRESH_MS = 60000  // full chart reload every 60s
 
 export default function CandleChart({ symbol }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)
-  const lastCandleRef = useRef(null)   // tracks the latest candle for live price updates
+  const lastCandleRef = useRef(null)
   const isFirstLoadRef = useRef(true)
-  const [interval, setInterval] = useState('1d')
+
+  // Renamed from 'interval'/'setInterval' to avoid shadowing window.setInterval
+  const [timeframe, setTimeframe] = useState('1d')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -34,9 +36,7 @@ export default function CandleChart({ symbol }) {
         vertLine: { color: 'rgba(0, 245, 255, 0.4)', style: 1 },
         horzLine: { color: 'rgba(0, 245, 255, 0.4)', style: 1 },
       },
-      rightPriceScale: {
-        borderColor: 'rgba(0, 245, 255, 0.2)',
-      },
+      rightPriceScale: { borderColor: 'rgba(0, 245, 255, 0.2)' },
       timeScale: {
         borderColor: 'rgba(0, 245, 255, 0.2)',
         timeVisible: true,
@@ -58,15 +58,15 @@ export default function CandleChart({ symbol }) {
     chartRef.current = chart
     seriesRef.current = series
 
-    const resizeObserver = new ResizeObserver(() => {
+    const ro = new ResizeObserver(() => {
       if (containerRef.current) {
         chart.applyOptions({ width: containerRef.current.clientWidth })
       }
     })
-    resizeObserver.observe(containerRef.current)
+    ro.observe(containerRef.current)
 
     return () => {
-      resizeObserver.disconnect()
+      ro.disconnect()
       chart.remove()
       chartRef.current = null
       seriesRef.current = null
@@ -79,7 +79,7 @@ export default function CandleChart({ symbol }) {
     if (isFirstLoadRef.current) setLoading(true)
     setError(null)
     try {
-      const { data } = await api.get(`/crypto/${symbol}/candles?interval=${interval}&limit=200`)
+      const { data } = await api.get(`/crypto/${symbol}/candles?interval=${timeframe}&limit=200`)
       if (seriesRef.current && data.length > 0) {
         seriesRef.current.setData(data)
         lastCandleRef.current = { ...data[data.length - 1] }
@@ -93,9 +93,9 @@ export default function CandleChart({ symbol }) {
     } finally {
       setLoading(false)
     }
-  }, [symbol, interval])
+  }, [symbol, timeframe])
 
-  // Live price update — only updates the last candle's close/high/low
+  // Live price tick — only updates close/high/low of last candle
   const updateLivePrice = useCallback(async () => {
     if (!symbol || !seriesRef.current || !lastCandleRef.current) return
     try {
@@ -112,27 +112,27 @@ export default function CandleChart({ symbol }) {
       lastCandleRef.current = updated
       seriesRef.current.update(updated)
     } catch {
-      // silent — don't show error on background price tick
+      // silent
     }
   }, [symbol])
 
-  // Reload full chart on symbol or interval change
+  // Reload on symbol or timeframe change
   useEffect(() => {
     isFirstLoadRef.current = true
     lastCandleRef.current = null
     loadCandles()
-  }, [symbol, interval])
+  }, [symbol, timeframe])
 
   // Full chart refresh every 60s
   useEffect(() => {
-    const id = setInterval(loadCandles, CHART_REFRESH_MS)
-    return () => clearInterval(id)
+    const id = window.setInterval(loadCandles, CHART_REFRESH_MS)
+    return () => window.clearInterval(id)
   }, [loadCandles])
 
-  // Live price tick every 10s
+  // Price tick every 10s
   useEffect(() => {
-    const id = setInterval(updateLivePrice, PRICE_REFRESH_MS)
-    return () => clearInterval(id)
+    const id = window.setInterval(updateLivePrice, PRICE_REFRESH_MS)
+    return () => window.clearInterval(id)
   }, [updateLivePrice])
 
   return (
@@ -145,9 +145,9 @@ export default function CandleChart({ symbol }) {
           {INTERVALS.map(iv => (
             <button
               key={iv}
-              onClick={() => setInterval(iv)}
+              onClick={() => setTimeframe(iv)}
               className={`px-2 py-1 text-xs font-mono transition-all ${
-                interval === iv
+                timeframe === iv
                   ? 'text-cyber-bg bg-cyber-cyan'
                   : 'text-cyber-cyan border border-cyber-border hover:border-cyber-cyan'
               }`}
