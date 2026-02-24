@@ -47,6 +47,14 @@ export default function Navbar() {
               </Link>
             </>
           )}
+          <Link
+            to="/docs"
+            className={`font-mono text-sm uppercase tracking-wider transition-colors ${
+              isActive('/docs') ? 'text-cyber-pink text-glow-pink' : 'text-gray-400 hover:text-cyber-pink'
+            }`}
+          >
+            Docs
+          </Link>
         </div>
 
         {/* Auth */}

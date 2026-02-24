@@ -7,6 +7,7 @@ import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
 import BotDetail from './pages/BotDetail'
 import Crypto from './pages/Crypto'
+import Docs from './pages/Docs'
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
           </ProtectedRoute>
         } />
         <Route path="/crypto" element={<Crypto />} />
+        <Route path="/docs" element={<Docs />} />
       </Routes>
     </BrowserRouter>
   )
