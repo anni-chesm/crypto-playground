@@ -20,21 +20,21 @@ export default function BotDetail() {
     setLoading(true)
     setError(null)
     try {
-      const [botRes, ordersRes, posRes] = await Promise.all([
-        api.get(`/bots/${id}`),
-        api.get('/trading/orders', { headers: { 'X-API-Token': '' } }), // will fail without token, we'll use bot's token
-        api.get(`/bots/${id}`) // placeholder
-      ])
-      setBot(botRes.data)
+      // 1. Get bot data first (uses JWT)
+      const botRes = await api.get(`/bots/${id}`)
+      const botData = botRes.data
+      setBot(botData)
 
-      // Load trading data using bot's API token
-      const tokenHeader = { headers: { 'X-API-Token': botRes.data.api_token } }
+      // 2. Get trading data using the bot's API token (not JWT)
+      const apiToken = botData.api_token
       const [oRes, pRes] = await Promise.all([
-        fetch('/api/trading/orders', { headers: { 'X-API-Token': botRes.data.api_token } }),
-        fetch('/api/trading/positions', { headers: { 'X-API-Token': botRes.data.api_token } })
+        fetch('/api/trading/orders', { headers: { 'X-API-Token': apiToken } }),
+        fetch('/api/trading/positions', { headers: { 'X-API-Token': apiToken } })
       ])
-      setOrders(await oRes.json())
-      setPositions(await pRes.json())
+      const ordersData = await oRes.json()
+      const posData = await pRes.json()
+      setOrders(Array.isArray(ordersData) ? ordersData : [])
+      setPositions(Array.isArray(posData) ? posData : [])
     } catch (err) {
       console.error(err)
       setError('Failed to load bot details')

@@ -15,13 +15,18 @@ api.interceptors.request.use((config) => {
 })
 
 // Handle auth errors globally
+// Only logout on JWT errors, NOT on X-API-Token errors
 api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('user')
-      window.location.href = '/login'
+      const msg = err.response?.data?.error || ''
+      const isJwtError = msg.includes('Authorization token required') || msg.includes('Invalid or expired token')
+      if (isJwtError) {
+        localStorage.removeItem('token')
+        localStorage.removeItem('user')
+        window.location.href = '/login'
+      }
     }
     return Promise.reject(err)
   }
