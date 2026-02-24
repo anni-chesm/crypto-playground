@@ -1,16 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { createChart } from 'lightweight-charts'
 import api from '../api/client'
 
 const INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d', '1w']
+const REFRESH_MS = 10000
 
 export default function CandleChart({ symbol }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)
+  const isFirstLoadRef = useRef(true)
   const [interval, setInterval] = useState('1d')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [lastUpdate, setLastUpdate] = useState(null)
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -68,34 +71,54 @@ export default function CandleChart({ symbol }) {
     }
   }, [])
 
-  useEffect(() => {
+  const loadCandles = useCallback(async (silent = false) => {
     if (!symbol || !seriesRef.current) return
-    loadCandles()
-  }, [symbol, interval])
-
-  const loadCandles = async () => {
-    setLoading(true)
+    if (!silent) setLoading(true)
     setError(null)
     try {
       const { data } = await api.get(`/crypto/${symbol}/candles?interval=${interval}&limit=200`)
       if (seriesRef.current && data.length > 0) {
         seriesRef.current.setData(data)
-        chartRef.current.timeScale().fitContent()
+        // Only fit content on first load or interval change, not on silent refresh
+        if (isFirstLoadRef.current) {
+          chartRef.current.timeScale().fitContent()
+          isFirstLoadRef.current = false
+        }
       }
+      setLastUpdate(new Date().toLocaleTimeString())
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load candles')
+      if (!silent) setError(err.response?.data?.error || 'Failed to load candles')
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
-  }
+  }, [symbol, interval])
+
+  // Load on symbol or interval change
+  useEffect(() => {
+    isFirstLoadRef.current = true
+    loadCandles(false)
+  }, [symbol, interval])
+
+  // Auto-refresh every 10s (silent)
+  useEffect(() => {
+    const id = setInterval(() => loadCandles(true), REFRESH_MS)
+    return () => clearInterval(id)
+  }, [loadCandles])
 
   return (
     <div className="cyber-card p-4">
       {/* Interval selector */}
       <div className="flex items-center justify-between mb-4">
-        <h3 className="font-orbitron text-cyber-cyan text-sm uppercase tracking-wider">
-          {symbol} Chart
-        </h3>
+        <div>
+          <h3 className="font-orbitron text-cyber-cyan text-sm uppercase tracking-wider">
+            {symbol} Chart
+          </h3>
+          {lastUpdate && (
+            <p className="font-mono text-xs text-gray-600 mt-0.5">
+              ↻ {lastUpdate}
+            </p>
+          )}
+        </div>
         <div className="flex gap-1">
           {INTERVALS.map(iv => (
             <button
