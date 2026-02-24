@@ -3,22 +3,23 @@ import { createChart } from 'lightweight-charts'
 import api from '../api/client'
 
 const INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d', '1w']
-const REFRESH_MS = 10000
+const PRICE_REFRESH_MS = 10000   // update last candle price every 10s
+const CHART_REFRESH_MS = 60000   // full chart reload every 60s
 
 export default function CandleChart({ symbol }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const seriesRef = useRef(null)
+  const lastCandleRef = useRef(null)   // tracks the latest candle for live price updates
   const isFirstLoadRef = useRef(true)
   const [interval, setInterval] = useState('1d')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [lastUpdate, setLastUpdate] = useState(null)
 
+  // Init chart once
   useEffect(() => {
     if (!containerRef.current) return
 
-    // Create chart
     const chart = createChart(containerRef.current, {
       layout: {
         background: { color: '#0a0a0f' },
@@ -57,7 +58,6 @@ export default function CandleChart({ symbol }) {
     chartRef.current = chart
     seriesRef.current = series
 
-    // Resize observer
     const resizeObserver = new ResizeObserver(() => {
       if (containerRef.current) {
         chart.applyOptions({ width: containerRef.current.clientWidth })
@@ -68,57 +68,79 @@ export default function CandleChart({ symbol }) {
     return () => {
       resizeObserver.disconnect()
       chart.remove()
+      chartRef.current = null
+      seriesRef.current = null
     }
   }, [])
 
-  const loadCandles = useCallback(async (silent = false) => {
+  // Full candle reload
+  const loadCandles = useCallback(async () => {
     if (!symbol || !seriesRef.current) return
-    if (!silent) setLoading(true)
+    if (isFirstLoadRef.current) setLoading(true)
     setError(null)
     try {
       const { data } = await api.get(`/crypto/${symbol}/candles?interval=${interval}&limit=200`)
       if (seriesRef.current && data.length > 0) {
         seriesRef.current.setData(data)
-        // Only fit content on first load or interval change, not on silent refresh
+        lastCandleRef.current = { ...data[data.length - 1] }
         if (isFirstLoadRef.current) {
           chartRef.current.timeScale().fitContent()
           isFirstLoadRef.current = false
         }
       }
-      setLastUpdate(new Date().toLocaleTimeString())
     } catch (err) {
-      if (!silent) setError(err.response?.data?.error || 'Failed to load candles')
+      setError(err.response?.data?.error || 'Failed to load candles')
     } finally {
-      if (!silent) setLoading(false)
+      setLoading(false)
     }
   }, [symbol, interval])
 
-  // Load on symbol or interval change
+  // Live price update — only updates the last candle's close/high/low
+  const updateLivePrice = useCallback(async () => {
+    if (!symbol || !seriesRef.current || !lastCandleRef.current) return
+    try {
+      const { data } = await api.get(`/crypto/${symbol}/price`)
+      const newPrice = data.price
+      const prev = lastCandleRef.current
+      const updated = {
+        time:  prev.time,
+        open:  prev.open,
+        high:  Math.max(prev.high, newPrice),
+        low:   Math.min(prev.low, newPrice),
+        close: newPrice,
+      }
+      lastCandleRef.current = updated
+      seriesRef.current.update(updated)
+    } catch {
+      // silent — don't show error on background price tick
+    }
+  }, [symbol])
+
+  // Reload full chart on symbol or interval change
   useEffect(() => {
     isFirstLoadRef.current = true
-    loadCandles(false)
+    lastCandleRef.current = null
+    loadCandles()
   }, [symbol, interval])
 
-  // Auto-refresh every 10s (silent)
+  // Full chart refresh every 60s
   useEffect(() => {
-    const id = setInterval(() => loadCandles(true), REFRESH_MS)
+    const id = setInterval(loadCandles, CHART_REFRESH_MS)
     return () => clearInterval(id)
   }, [loadCandles])
 
+  // Live price tick every 10s
+  useEffect(() => {
+    const id = setInterval(updateLivePrice, PRICE_REFRESH_MS)
+    return () => clearInterval(id)
+  }, [updateLivePrice])
+
   return (
     <div className="cyber-card p-4">
-      {/* Interval selector */}
       <div className="flex items-center justify-between mb-4">
-        <div>
-          <h3 className="font-orbitron text-cyber-cyan text-sm uppercase tracking-wider">
-            {symbol} Chart
-          </h3>
-          {lastUpdate && (
-            <p className="font-mono text-xs text-gray-600 mt-0.5">
-              ↻ {lastUpdate}
-            </p>
-          )}
-        </div>
+        <h3 className="font-orbitron text-cyber-cyan text-sm uppercase tracking-wider">
+          {symbol} Chart
+        </h3>
         <div className="flex gap-1">
           {INTERVALS.map(iv => (
             <button
