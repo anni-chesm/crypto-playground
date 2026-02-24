@@ -122,7 +122,7 @@ export default function Dashboard() {
             <form onSubmit={createBot} className="flex gap-3">
               <input
                 type="text"
-                className="cyber-input flex-[3] min-w-0"
+                className="cyber-input w-[70%]"
                 placeholder="Bot name..."
                 value={newBotName}
                 onChange={e => setNewBotName(e.target.value)}
