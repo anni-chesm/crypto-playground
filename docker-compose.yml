@@ -7,16 +7,16 @@ services:
       dockerfile: Dockerfile
     container_name: crypto-backend
     environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - JWT_SECRET=crypto-playground-jwt-secret-2024-secure
+      - NODE_ENV=${NODE_ENV:-production}
+      - PORT=${BACKEND_PORT:-3000}
+      - JWT_SECRET=${JWT_SECRET:-crypto-playground-jwt-secret-change-me}
     volumes:
       - backend-data:/app/data
     restart: unless-stopped
     networks:
       - crypto-net
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/api/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:${BACKEND_PORT:-3000}/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -36,8 +36,8 @@ services:
     image: nginx:alpine
     container_name: crypto-nginx
     ports:
-      - "8001:443"
-      - "8080:80"
+      - "${APP_PORT:-8001}:443"
+      - "${APP_PORT_HTTP:-8080}:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
